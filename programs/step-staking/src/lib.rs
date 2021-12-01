@@ -2,6 +2,7 @@
 /// https://github.com/sushiswap/sushiswap/blob/master/contracts/SushiBar.sol
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
+use metaplex_token_metadata::state::Metadata;
 use std::convert::TryInto;
 
 #[cfg(not(feature = "local-testing"))]
@@ -253,6 +254,26 @@ pub mod step_staking {
         });
         Ok(())
     }
+
+    pub fn stake_nft(ctx: Context<StakeNft>, _nonce_staking: u8) -> ProgramResult {
+        let token_metadata = &ctx.accounts.token_metadata;
+        let metadata = Metadata::from_account_info(&token_metadata)?;
+
+        match metadata.data.creators {
+            Some(creators) => {
+                for creator in creators {
+                    assert_keys_equal(
+                        creator.address,
+                        ctx.accounts.staking_account.initializer_key,
+                    )?;
+                }
+            }
+            None => {
+                msg!("No creators found in metadata");
+            }
+        }
+        Ok(())
+    }
 }
 
 const E9: u128 = 1000000000;
@@ -277,6 +298,14 @@ pub fn get_price<'info>(
         .unwrap();
     let price_float = (total_token as f64) / (total_x_token as f64);
     return (price_uint, price_float.to_string());
+}
+
+pub fn assert_keys_equal(key1: Pubkey, key2: Pubkey) -> ProgramResult {
+    if key1 != key2 {
+        Err(ErrorCode::PublicKeyMismatch.into())
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -476,6 +505,23 @@ pub struct EmitReward<'info> {
     pub user_staking_account: ProgramAccount<'info, UserStakingAccount>,
 }
 
+#[derive(Accounts)]
+#[instruction(_nonce_staking: u8)]
+pub struct StakeNft<'info> {
+    //the authority allowed to transfer from token_from
+    pub token_from_authority: Signer<'info>,
+
+    pub token_metadata: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [ constants::STAKING_PDA_SEED.as_ref() ],
+        bump = _nonce_staking,
+        constraint = !staking_account.freeze_program,
+    )]
+    pub staking_account: ProgramAccount<'info, StakingAccount>,
+}
+
 #[account]
 #[derive(Default)]
 pub struct StakingAccount {
@@ -516,4 +562,6 @@ pub struct Reward {
 pub enum ErrorCode {
     #[msg("Not exceed lock end date")]
     NotExceedLockEndDate,
+    #[msg("PublicKeyMismatch")]
+    PublicKeyMismatch,
 }
